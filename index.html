@@ -129,7 +129,16 @@ tfoot td { font-weight:800; background:#f8fafd; }
 .small { font-size:13px; color:var(--tx-3); margin-top:14px; }
 .err { color:var(--red); font-weight:700; }
 
+.chartwrap { position:relative; }
 svg.chart { width:100%; height:auto; display:block; }
+.tip { position:absolute; top:8px; pointer-events:none; background:#fff; border:1px solid var(--line-2); border-radius:12px; box-shadow:0 6px 20px rgba(16,24,40,.14); padding:10px 12px; min-width:186px; z-index:5; }
+.tip .td { font-size:12.5px; font-weight:800; color:var(--tx); margin-bottom:7px; text-transform:capitalize; }
+.tip .tr { display:flex; align-items:center; gap:8px; font-size:12.5px; color:var(--tx-2); font-weight:600; margin-bottom:4px; }
+.tip .tr .k { flex:1; }
+.tip .tr .v { font-weight:800; color:var(--tx); font-variant-numeric:tabular-nums; }
+.tip .sq { width:9px; height:9px; border-radius:3px; flex:none; }
+.tip .tf { border-top:1px solid var(--line); margin-top:7px; padding-top:7px; font-size:12px; color:var(--tx-2); font-weight:600; }
+.tip .tf b { color:var(--tx); }
 svg.chart text { font-size:11px; font-weight:600; fill:var(--tx-3); font-family:var(--font); }
 
 .overlay { position:fixed; inset:0; background:rgba(23,33,46,.45); display:flex; align-items:center; justify-content:center; padding:1rem; z-index:60; }
@@ -242,6 +251,7 @@ const LOGO = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAbgAAABCCAIAAACq1lQv
 let ROWS = [], VIEW = [], LAST = null;
 let META = { file:'', sheet:'', rows:0, users:0, minD:null, maxD:null, maxMark:null, turnos:{}, tieneHoras:false };
 let SORT = { key:'usuarios', dir:-1 };
+let CHART = { dias:[], x:()=>0, y:()=>0 };
 
 const norm = s => String(s ?? '').normalize('NFKD').replace(/[\u0300-\u036f]/g,'').replace(/\s+/g,' ').trim().toLowerCase();
 const isEmpty = v => v === null || v === undefined || (typeof v === 'string' && v.trim() === '');
@@ -620,14 +630,14 @@ function chart(){
   const step = Math.ceil(n / 14);
   const grid = [0, top/2, top].map(v => `<line x1="${L}" y1="${y(v)}" x2="${W-Rr}" y2="${y(v)}" stroke="#eef1f6" stroke-width="1"/><text x="${L-9}" y="${y(v)+4}" text-anchor="end">${Math.round(v)}</text>`).join('');
   const labels = dias.map((d,i) => (i % step === 0 || i === n - 1) ? `<text x="${x(i)}" y="${H-22}" text-anchor="middle" ${d.dk > META.maxMark ? 'opacity="0.45"' : ''}>${corto(d.dk)}</text><text x="${x(i)}" y="${H-9}" text-anchor="middle" opacity="0.6" style="font-size:9.5px">${DOW[dObj(d.dk).getUTCDay()]}</text>` : '').join('');
-  const hover = dias.map((d,i) => `<g><title>${cortoDow(d.dk)}
-Planificados: ${fmt(d.plan)}
-Marcaron: ${fmt(d.marca)}
-Planificados que marcaron: ${fmt(d.planMarca)}${d.plan ? ` (${pct(d.planMarca,d.plan)}%)` : ''}</title><rect x="${x(i) - (W-L-Rr)/(2*Math.max(1,n-1))}" y="${T}" width="${(W-L-Rr)/Math.max(1,n-1)}" height="${H-T-B}" fill="transparent"/></g>`).join('');
+  const paso = (W - L - Rr) / Math.max(1, n - 1);
+  const hover = dias.map((d,i) => `<rect x="${x(i) - paso/2}" y="${T}" width="${paso}" height="${H-T-B}" fill="transparent" onmousemove="tip(${i},event)" onmouseenter="tip(${i},event)"></rect>`).join('');
   const puntos = dias.map((d,i) => d.dk > META.maxMark ? '' : `<circle cx="${x(i)}" cy="${y(d.marca)}" r="2.6" fill="#fff" stroke="#3b9df8" stroke-width="1.8"/>`).join('');
 
-  document.getElementById('chartCap').textContent = `${n} días · ${corto(dias[0].dk)} a ${corto(dias[n-1].dk)} · pasa el cursor por un día para ver el detalle`;
+  document.getElementById('chartCap').textContent = `${n} días · ${corto(dias[0].dk)} a ${corto(dias[n-1].dk)} · pasa el cursor por cualquier día para ver los números exactos`;
+  CHART = { dias, x, y };
   document.getElementById('chart').innerHTML = `
+  <div class="chartwrap" onmouseleave="tipOff()">
   <svg class="chart" viewBox="0 0 ${W} ${H}" role="img" aria-label="Usuarios planificados y usuarios que marcaron por día">
     <defs><linearGradient id="grad" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#3b9df8" stop-opacity="0.18"/><stop offset="100%" stop-color="#3b9df8" stop-opacity="0.02"/></linearGradient></defs>
     ${iFut >= 0 ? `<rect x="${x(iFut) - (W-L-Rr)/(2*Math.max(1,n-1))}" y="${T}" width="${W - Rr - x(iFut) + (W-L-Rr)/(2*Math.max(1,n-1))}" height="${H-T-B}" fill="#f7f9fc"/>` : ''}
@@ -635,8 +645,14 @@ Planificados que marcaron: ${fmt(d.planMarca)}${d.plan ? ` (${pct(d.planMarca,d.
     ${areaD ? `<path d="${areaD}" fill="url(#grad)"/>` : ''}
     ${dPlan ? `<path d="${dPlan}" fill="none" stroke="#b6c1d1" stroke-width="2" stroke-dasharray="5 5" stroke-linecap="round"/>` : ''}
     ${dMarca ? `<path d="${dMarca}" fill="none" stroke="#3b9df8" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/>` : ''}
-    ${puntos}${labels}${hover}
-  </svg>`;
+    ${puntos}${labels}
+    <line id="guia" x1="0" y1="${T}" x2="0" y2="${H-B}" stroke="#9fb0c6" stroke-width="1" stroke-dasharray="3 3" opacity="0"/>
+    <circle id="hiPlan" r="4.6" fill="#fff" stroke="#8d9bad" stroke-width="2.4" opacity="0"/>
+    <circle id="hiMarca" r="5.2" fill="#fff" stroke="#3b9df8" stroke-width="3" opacity="0"/>
+    ${hover}
+  </svg>
+  <div class="tip hidden" id="tip"></div>
+  </div>`;
 
   const t = LAST.tot, ok = t.planSinMarca === 0;
   document.getElementById('alertaChart').innerHTML = `
@@ -647,6 +663,35 @@ Planificados que marcaron: ${fmt(d.planMarca)}${d.plan ? ` (${pct(d.planMarca,d.
         <div class="t2">${fmt(t.sinPlan)} usuarios sin turno asignado · ${fmt(t.marcaSinPlan)} marcan sin planificación</div>
       </div>
     </div>`;
+}
+
+function tip(i, ev){
+  const d = CHART.dias[i]; if(!d) return;
+  const caja = document.getElementById('tip'); if(!caja) return;
+  const futuro = d.dk > META.maxMark;
+  caja.classList.remove('hidden');
+  caja.innerHTML = `<div class="td">${cortoDow(d.dk)} ${dObj(d.dk).getUTCFullYear()}</div>
+    <div class="tr"><span class="sq" style="background:#b6c1d1"></span><span class="k">Planificados</span><span class="v">${fmt(d.plan)}</span></div>
+    <div class="tr"><span class="sq" style="background:var(--blue)"></span><span class="k">Marcaron</span><span class="v">${futuro ? '—' : fmt(d.marca)}</span></div>
+    <div class="tf">${futuro ? 'Día sin marcas todavía: solo hay turnos planificados.'
+      : `Planificados que marcaron: <b>${fmt(d.planMarca)}</b>${d.plan ? ` de ${fmt(d.plan)} (${pct(d.planMarca,d.plan)}%)` : ''}`}</div>`;
+  const wrap = caja.parentElement, r = wrap.getBoundingClientRect();
+  const ancho = caja.offsetWidth || 190;
+  let left = ev.clientX - r.left + 16;
+  if(left + ancho > r.width) left = ev.clientX - r.left - ancho - 16;
+  caja.style.left = Math.max(0, left) + 'px';
+
+  const px = CHART.x(i), gy = wrap.querySelector('#guia');
+  if(gy){ gy.setAttribute('x1', px); gy.setAttribute('x2', px); gy.setAttribute('opacity', 0.9); }
+  const hp = wrap.querySelector('#hiPlan'), hm = wrap.querySelector('#hiMarca');
+  if(hp){ hp.setAttribute('cx', px); hp.setAttribute('cy', CHART.y(d.plan)); hp.setAttribute('opacity', 1); }
+  if(hm){ hm.setAttribute('cx', px); hm.setAttribute('cy', CHART.y(d.marca)); hm.setAttribute('opacity', futuro ? 0 : 1); }
+}
+function tipOff(){
+  const caja = document.getElementById('tip'); if(!caja) return;
+  caja.classList.add('hidden');
+  const wrap = caja.parentElement;
+  ['#guia','#hiPlan','#hiMarca'].forEach(sel => { const el = wrap.querySelector(sel); if(el) el.setAttribute('opacity', 0); });
 }
 
 function mejorasCard(R){
