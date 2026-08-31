@@ -161,7 +161,8 @@ code { font-family:ui-monospace, Menlo, monospace; font-size:12.5px; background:
       <div class="bar"></div>
       <div>
         <h1 id="saludo">Asistencia por grupo</h1>
-        <p class="sub" id="subtitulo">Carga el reporte de Gestión de Asistencia · una fila por usuario y día</p>
+        <p class="sub" id="subtitulo">Sube el libro de asistencia · una fila por usuario y día</p>
+        <p class="sub hidden" id="periodoLinea" style="margin-top:5px;font-weight:700;color:var(--tx);"></p>
       </div>
     </div>
     <div class="tools">
@@ -173,9 +174,10 @@ code { font-family:ui-monospace, Menlo, monospace; font-size:12.5px; background:
   </div>
 
   <div id="uploader" class="drop" ondragover="dragOver(event)" ondragleave="dragLeave(event)" ondrop="dropFile(event)">
-    <h2>Arrastra aquí el archivo .xlsx</h2>
-    <p>Se detectan solas las columnas Grupo, Identificador, Fecha, Turno y las marcas de Entró / Salió. Todo se procesa en tu navegador: el archivo no se envía a ningún servidor.</p>
-    <button class="btn btn-blue" onclick="document.getElementById('fileInput').click()">Elegir archivo</button>
+    <h2>Sube el libro de asistencia</h2>
+    <p><strong>Debes subir el archivo del libro de asistencia</strong> exportado desde GeoVictoria: el reporte de Gestión de Asistencia en formato <code>.xlsx</code>, con una fila por usuario y día. Arrástralo aquí o búscalo en tu equipo.</p>
+    <p style="font-size:13.5px;">Se detectan solas las columnas Grupo, Identificador, Fecha, Turno y las marcas de Entró / Salió. Todo se procesa en tu navegador: el archivo no se envía a ningún servidor.</p>
+    <button class="btn btn-blue" onclick="document.getElementById('fileInput').click()">Elegir libro de asistencia</button>
     <input type="file" id="fileInput" class="hidden" accept=".xlsx,.xls,.csv" onchange="handleFiles(this.files)">
     <p class="small" id="loadMsg"></p>
   </div>
@@ -183,6 +185,7 @@ code { font-family:ui-monospace, Menlo, monospace; font-size:12.5px; background:
   <div id="dash" class="hidden">
 
     <div id="panel" class="panel hidden">
+      <div class="field"><label for="inEmpresa">Empresa / cliente</label><input type="text" id="inEmpresa" placeholder="Nombre de la empresa" style="min-width:230px" oninput="render()"></div>
       <div class="field"><label for="fDesde">Desde</label><input type="date" id="fDesde" onchange="render()"></div>
       <div class="field"><label for="fHasta">Hasta</label><input type="date" id="fHasta" onchange="render()"></div>
       <div class="field">
@@ -262,6 +265,11 @@ const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt
 const MESES = ['enero','febrero','marzo','abril','mayo','junio','julio','agosto','septiembre','octubre','noviembre','diciembre'];
 const MESC = ['ene','feb','mar','abr','may','jun','jul','ago','sep','oct','nov','dic'];
 const DOW = ['dom','lun','mar','mié','jue','vie','sáb'];
+
+function empresa(){ const e = document.getElementById('inEmpresa'); return e && e.value ? e.value.trim() : ''; }
+function empresaTxt(){ return empresa() || 'Empresa sin especificar'; }
+function periodoTxt(){ return LAST ? `${largo(LAST.desde)} al ${largo(LAST.hasta)}` : ''; }
+function slug(s){ return String(s || '').normalize('NFKD').replace(/[\u0300-\u036f]/g,'').replace(/[^\w\s-]/g,'').trim().replace(/\s+/g,'_').slice(0,28); }
 
 function dObj(dk){ const [y,m,d] = dk.split('-').map(Number); return new Date(Date.UTC(y,m-1,d)); }
 function corto(dk){ const d = dObj(dk); return `${d.getUTCDate()} ${MESC[d.getUTCMonth()]}`; }
@@ -381,7 +389,7 @@ function procesar(wb, fileName){
   document.getElementById('dash').classList.remove('hidden');
   ['selGrupo','btnPers','btnExcel','btnPdf'].forEach(i => document.getElementById(i).classList.remove('hidden'));
   document.getElementById('saludo').textContent = 'Asistencia por grupo';
-  document.getElementById('subtitulo').textContent = `${fileName} · ${largo(minD)} a ${largo(maxD)} · ${fmt(META.users)} usuarios`;
+  document.getElementById('subtitulo').textContent = `${fileName} · el archivo abarca del ${largo(minD)} al ${largo(maxD)} · ${fmt(META.users)} usuarios`;
   render();
 }
 
@@ -393,7 +401,8 @@ function resetAll(){
   document.getElementById('panel').classList.add('hidden');
   document.getElementById('uploader').classList.remove('hidden');
   ['selGrupo','btnPers','btnExcel','btnPdf'].forEach(i => document.getElementById(i).classList.add('hidden'));
-  document.getElementById('subtitulo').textContent = 'Carga el reporte de Gestión de Asistencia · una fila por usuario y día';
+  document.getElementById('subtitulo').textContent = 'Sube el libro de asistencia · una fila por usuario y día';
+  document.getElementById('periodoLinea').classList.add('hidden');
 }
 function resetFilters(){
   document.getElementById('fDesde').value = META.minD;
@@ -441,7 +450,7 @@ function calcular(){
     if(r.conPermiso){ g.permisosN++; u.permisos++; permisosTot++; }
     if(conMarca){
       g.marcas += r.marcas; u.marcas += r.marcas; u.diasMarca++;
-      if(planificado){ g.diasPlanMarca++; u.diasPlanMarca++; }
+      if(esperado){ g.diasPlanMarca++; u.diasPlanMarca++; }
       if(!u.primera || r.dk < u.primera) u.primera = r.dk;
       if(!u.ultima || r.dk > u.ultima) u.ultima = r.dk;
       if(r.atraso > 0){ diasAtraso++; usuariosAtraso.add(r.id); }
@@ -562,6 +571,10 @@ function render(){
   VIEW = R.filas.slice();
   ordenar();
 
+  const pl = document.getElementById('periodoLinea');
+  pl.classList.remove('hidden');
+  pl.innerHTML = `${empresa() ? esc(empresa()) + ' · ' : '<span style="color:var(--tx-3);font-weight:600">Sin empresa asignada (agrégala en Personalizar) · </span>'}Período revisado: ${largo(R.desde)} al ${largo(R.hasta)}`;
+
   const hint = document.getElementById('rangeHint');
   if(META.maxMark < META.maxD && document.getElementById('fHasta').value <= META.maxMark){
     hint.classList.remove('hidden');
@@ -579,13 +592,13 @@ function render(){
     <strong>${esc(META.file)}</strong> · hoja <code>${esc(META.sheet)}</code> · ${fmt(META.rows)} filas usuario-día · ${nTurnos} turnos distintos.<br>
     <strong>Marcaje</strong>: usuarios con al menos una marca (Entró o Salió) ÷ usuarios del rango.
     <strong>Planificación</strong>: usuarios con al menos un día con turno asignado ÷ usuarios del rango. “No Planificado” nunca cuenta; “Descanso” cuenta solo si activas la opción en Personalizar.
-    <strong>Cumplimiento</strong>: días planificados con marca ÷ días planificados${R.descontarPermiso ? ', descontando días con permiso' : ''}.
+    <strong>Cumplimiento</strong>: días planificados con marca ÷ días planificados${R.descontarPermiso ? ', descontando de ambos lados los días con permiso' : ''}.
     El gráfico muestra todos los días del archivo; el resto del tablero respeta el rango ${corto(R.desde)} – ${corto(R.hasta)}.`;
 }
 
 function cobertura(t){
   const pm = pct(t.marcando, t.usuarios), pp = pct(t.planificados, t.usuarios);
-  document.getElementById('covSub').innerHTML = `${fmt(t.usuarios)} usuarios en el rango${LAST.grupoSel ? ' · ' + esc(LAST.grupoSel) : ''}`;
+  document.getElementById('covSub').innerHTML = `${fmt(t.usuarios)} usuarios · ${corto(LAST.desde)} al ${corto(LAST.hasta)}${LAST.grupoSel ? ' · ' + esc(LAST.grupoSel) : ''}`;
   document.getElementById('pctMarcaje').innerHTML = `<span class="bigdot" style="background:${colorPct(pm)}"></span>${pm}%`;
   document.getElementById('dscMarcaje').textContent = `${fmt(t.marcando)} de ${fmt(t.usuarios)} registraron marcas`;
   document.getElementById('pctPlan').innerHTML = `<span class="bigdot" style="background:${colorPct(pp)}"></span>${pp}%`;
@@ -812,44 +825,46 @@ function verLista(tipo){
 function todosUsuarios(){ const a = []; for(const g of VIEW) for(const u of g._users) a.push(u); return a; }
 
 /* ================= Excel ================= */
+function mkHoja(titulo, head, body, cols, pctCols){
+  const cab = [[titulo], [`${empresaTxt()}  ·  Período revisado: ${LAST.desde} a ${LAST.hasta}${LAST.grupoSel ? '  ·  ' + LAST.grupoSel : ''}`], [`Archivo: ${META.file}  ·  Generado: ${new Date().toLocaleString('es-MX')}`], []];
+  const ws = XLSX.utils.aoa_to_sheet([...cab, head, ...body]);
+  ws['!cols'] = cols;
+  const hr = cab.length;                       // fila del encabezado (0-index)
+  ws['!autofilter'] = { ref: XLSX.utils.encode_range({ s:{r:hr,c:0}, e:{r:hr + body.length, c:head.length-1} }) };
+  (pctCols || []).forEach(c => { for(let i = 0; i < body.length; i++){ const cell = ws[c + (hr + 2 + i)]; if(cell) cell.z = '0%'; } });
+  return ws;
+}
+
 function hojaGrupos(){
   const head = ['Grupo','Usuarios','Usuarios planificados','% planificación','Usuarios marcando','% marcaje','Planificados y marcando','Planificados sin marca','Marcan sin planificación','Sin planificar','Días planificados','Días esperados','Días planificados con marca','% cumplimiento','Días descanso','Días no planificados','Días con permiso','Total de marcas','Horas trabajadas','Tiempo extra'];
   const body = VIEW.map(g => [g.grupo,g.usuarios,g.planificados,g.pctPlan/100,g.marcando,g.pctMarcaje/100,g.planMarcando,g.planSinMarca,g.marcaSinPlan,g.sinPlan,g.diasPlan,g.diasEsperados,g.diasPlanMarca,g.cumplimiento/100,g.diasDescanso,g.diasNoPlan,g.permisos,g.marcas,Math.round(g.ht*100)/100,Math.round(g.extra*100)/100]);
-  const ws = XLSX.utils.aoa_to_sheet([head, ...body]);
-  ws['!cols'] = [{wch:34}, ...Array(head.length-1).fill({wch:14})];
-  ws['!autofilter'] = { ref: XLSX.utils.encode_range({ s:{r:0,c:0}, e:{r:body.length, c:head.length-1} }) };
-  for(let r = 1; r <= body.length; r++) ['D','F','N'].forEach(c => { const cell = ws[c + (r+1)]; if(cell) cell.z = '0%'; });
-  return ws;
+  return mkHoja('Resumen por grupo', head, body, [{wch:34}, ...Array(head.length-1).fill({wch:14})], ['D','F','N']);
 }
 function hojaUsuarios(users){
   const head = ['Grupo','Identificador','Nombre','Cargo','Días planificados','Días esperados','Días con marca','Días planificados con marca','Total marcas','Días con permiso','Horas trabajadas','Tiempo extra','Primera marca','Última marca','Estado'];
   const body = users.map(u => [u.grupo,u.id,u.nombre,u.cargo,u.diasPlan,u.diasEsperados,u.diasMarca,u.diasPlanMarca,u.marcas,u.permisos,Math.round(u.ht*100)/100,Math.round(u.extra*100)/100,u.primera||'',u.ultima||'',estadoUser(u)[1]]);
-  const ws = XLSX.utils.aoa_to_sheet([head, ...body]);
-  ws['!cols'] = [{wch:32},{wch:16},{wch:28},{wch:22}, ...Array(8).fill({wch:14}),{wch:13},{wch:13},{wch:28}];
-  ws['!autofilter'] = { ref: XLSX.utils.encode_range({ s:{r:0,c:0}, e:{r:body.length, c:head.length-1} }) };
-  return ws;
+  return mkHoja('Detalle de usuarios', head, body, [{wch:32},{wch:16},{wch:28},{wch:22}, ...Array(8).fill({wch:14}),{wch:13},{wch:13},{wch:28}]);
 }
 function hojaDias(){
   const head = ['Fecha','Día','Usuarios planificados','Usuarios que marcaron','Planificados que marcaron','% cumplimiento del día'];
   const body = LAST.serie.map(d => [d.dk, DOW[dObj(d.dk).getUTCDay()], d.plan, d.marca, d.planMarca, d.plan ? d.planMarca/d.plan : 0]);
-  const ws = XLSX.utils.aoa_to_sheet([head, ...body]);
-  ws['!cols'] = [{wch:12},{wch:8},{wch:22},{wch:24},{wch:26},{wch:22}];
-  for(let r = 1; r <= body.length; r++){ const c = ws['F' + (r+1)]; if(c) c.z = '0%'; }
-  return ws;
+  return mkHoja('Marcaje por día', head, body, [{wch:12},{wch:8},{wch:22},{wch:24},{wch:26},{wch:22}], ['F']);
 }
 function hojaMejoras(){
   const head = ['Prioridad','Hallazgo','Usuarios/días afectados','Dónde','Acción sugerida'];
   const body = mejoras(LAST).map(m => [m.sev, m.titulo, m.n, m.donde, m.accion]);
-  const ws = XLSX.utils.aoa_to_sheet([head, ...body]);
-  ws['!cols'] = [{wch:11},{wch:40},{wch:22},{wch:60},{wch:60}];
-  return ws;
+  return mkHoja('Espacios de mejora', head, body, [{wch:11},{wch:40},{wch:22},{wch:60},{wch:60}]);
 }
 function hojaParams(){
   const t = LAST.tot;
-  const aoa = [['Reporte de asistencia por grupo — GeoVictoria'], ['Generado', new Date().toLocaleString('es-MX')],
+  const aoa = [['Reporte de asistencia por grupo — GeoVictoria'],
+    ['Empresa', empresaTxt()],
+    ['Período revisado', `${LAST.desde} a ${LAST.hasta}`],
+    ['Período revisado (texto)', periodoTxt()],
+    ['Generado', new Date().toLocaleString('es-MX')],
     ['Archivo origen', META.file], ['Hoja', META.sheet], ['Filas usuario-día', META.rows], [],
     ['Rango del archivo', META.minD + ' a ' + META.maxD], ['Última fecha con marcas', META.maxMark],
-    ['Rango analizado', LAST.desde + ' a ' + LAST.hasta], ['Grupo seleccionado', LAST.grupoSel || 'Todos'],
+    ['Grupo seleccionado', LAST.grupoSel || 'Todos'],
     ['Descanso cuenta como planificado', LAST.contarDescanso ? 'Sí' : 'No'], ['Días con permiso descontados', LAST.descontarPermiso ? 'Sí' : 'No'], [],
     ['Resultados del rango'], ['Grupos', LAST.filas.length], ['Usuarios', t.usuarios],
     ['% marcaje', pct(t.marcando,t.usuarios) + '%'], ['% planificación', pct(t.planificados,t.usuarios) + '%'],
@@ -868,22 +883,22 @@ function hojaParams(){
 function exportExcel(){
   if(!LAST) return;
   const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, hojaParams(), 'Portada');
   XLSX.utils.book_append_sheet(wb, hojaGrupos(), 'Resumen por grupo');
   XLSX.utils.book_append_sheet(wb, hojaMejoras(), 'Espacios de mejora');
   XLSX.utils.book_append_sheet(wb, hojaUsuarios(todosUsuarios()), 'Detalle usuarios');
   XLSX.utils.book_append_sheet(wb, hojaDias(), 'Por día');
-  XLSX.utils.book_append_sheet(wb, hojaParams(), 'Parámetros');
-  XLSX.writeFile(wb, `Asistencia_por_grupo_${LAST.desde}_a_${LAST.hasta}.xlsx`);
+  XLSX.writeFile(wb, `Asistencia_${empresa() ? slug(empresa()) + '_' : ''}${LAST.desde}_a_${LAST.hasta}.xlsx`);
 }
 function exportGrupo(i){
   const g = VIEW[i], wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, hojaUsuarios(g._users), 'Usuarios');
-  XLSX.writeFile(wb, `Asistencia_${g.grupo.replace(/[^\w\sáéíóúñÁÉÍÓÚÑ-]/g,'').trim().slice(0,25)}_${LAST.desde}.xlsx`);
+  XLSX.writeFile(wb, `Asistencia_${empresa() ? slug(empresa()) + '_' : ''}${slug(g.grupo)}_${LAST.desde}.xlsx`);
 }
 function exportLista(tipo){
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, hojaUsuarios(todosUsuarios().filter(FILTROS[tipo])), 'Usuarios');
-  XLSX.writeFile(wb, `Asistencia_${tipo}_${LAST.desde}_a_${LAST.hasta}.xlsx`);
+  XLSX.writeFile(wb, `Asistencia_${empresa() ? slug(empresa()) + '_' : ''}${tipo}_${LAST.desde}_a_${LAST.hasta}.xlsx`);
 }
 
 /* ================= PDF ================= */
@@ -899,9 +914,9 @@ function exportPDF(){
   function encabezado(){
     doc.addImage(LOGO, 'PNG', M, 9, 38, 5.7);
     doc.setFont('helvetica','bold'); doc.setFontSize(9); doc.setTextColor(...oscuro);
-    doc.text('Reporte de asistencia por grupo', PW - M, 12, { align:'right' });
+    doc.text(`Reporte de asistencia por grupo  ·  ${empresaTxt()}`, PW - M, 11.5, { align:'right' });
     doc.setFont('helvetica','normal'); doc.setFontSize(7.5); doc.setTextColor(...gris);
-    doc.text(`${META.file}  ·  ${LAST.desde} a ${LAST.hasta}${LAST.grupoSel ? '  ·  ' + LAST.grupoSel : ''}`, PW - M, 16, { align:'right' });
+    doc.text(`Período revisado: ${LAST.desde} a ${LAST.hasta}${LAST.grupoSel ? '  ·  ' + LAST.grupoSel : ''}  ·  ${META.file}`, PW - M, 15.8, { align:'right' });
     doc.setDrawColor(...linea); doc.setLineWidth(0.3); doc.line(M, 19, PW - M, 19);
   }
   function pie(){
@@ -928,9 +943,11 @@ function exportPDF(){
   // ---- Página 1: resumen + espacios de mejora
   encabezado();
   let y = 26;
-  doc.setFont('helvetica','bold'); doc.setFontSize(15); doc.setTextColor(...oscuro);
-  doc.text('Resumen del período', M, y);
-  y += 6;
+  doc.setFont('helvetica','bold'); doc.setFontSize(16); doc.setTextColor(...oscuro);
+  doc.text(empresaTxt(), M, y);
+  doc.setFont('helvetica','normal'); doc.setFontSize(8.5); doc.setTextColor(...gris);
+  doc.text(`Resumen del período revisado: ${periodoTxt()}`, M, y + 5);
+  y += 11;
   const pm = pct(t.marcando, t.usuarios), pp = pct(t.planificados, t.usuarios), pc = pct(t.diasPlanMarca, t.diasEsperados);
   const w = (PW - M*2 - 5*4) / 6;
   const cajas = [
@@ -1028,7 +1045,7 @@ function exportPDF(){
   cols.forEach((c,i) => doc.text(String(tot[i]), c.a === 'left' ? xs[i] + 2 : xs[i] + c.w - 2, y + 4.7, { align: c.a === 'left' ? 'left' : 'right' }));
 
   pie();
-  doc.save(`Reporte_asistencia_${LAST.desde}_a_${LAST.hasta}.pdf`);
+  doc.save(`Reporte_asistencia_${empresa() ? slug(empresa()) + '_' : ''}${LAST.desde}_a_${LAST.hasta}.pdf`);
 }
 </script>
 </body>
