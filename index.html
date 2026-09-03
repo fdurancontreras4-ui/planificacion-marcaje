@@ -1055,11 +1055,10 @@ function exportPDF(){
   doc.text(`Resumen del período revisado: ${periodoTxt()}`, M, y + 5);
   y += 14;
 
-  const pm = pct(t.marcando, t.usuarios), pp = pct(t.planificados, t.usuarios), pc = pct(t.diasPlanMarca, t.diasEsperados);
+  const pm = pct(t.marcando, t.usuarios), pp = pct(t.planificados, t.usuarios);
   const cajas = [
     ['% de marcaje', pm + '%', `${fmt(t.marcando)} de ${fmt(t.usuarios)} usuarios`, rgbPct(pm)],
     ['% de planificación', pp + '%', `${fmt(t.planificados)} con turno asignado`, rgbPct(pp)],
-    ['Cumplimiento de días', pc + '%', `${fmt(t.diasPlanMarca)} de ${fmt(t.diasEsperados)} días`, rgbPct(pc)],
     ['Sin planificar', fmt(t.sinPlan), 'usuarios sin turno', [124,107,240]],
     ['Planificados sin marcas', fmt(t.planSinMarca), 'nunca marcaron', [239,74,107]],
     ['Marcan sin planificar', fmt(t.marcaSinPlan), 'marcas sin turno', [59,157,248]]
@@ -1076,13 +1075,13 @@ function exportPDF(){
   }
   y += filasGrid*ch + Math.max(0, filasGrid-1)*gap;
   doc.setFont('helvetica','normal'); doc.setFontSize(8.5); doc.setTextColor(...gris);
-  doc.text('El detalle completo por grupo está en las páginas siguientes.', M, y + 10);
+  doc.text('En la siguiente sección se visualizan los grupos que no completan 100% de planificación o asistencia', M, y + 10);
 
   // ---- Tabla por grupo (solo grupos con planificación o marcaje bajo 100%)
   doc.addPage(); encabezado();
   y = 26;
   doc.setFont('helvetica','bold'); doc.setFontSize(13); doc.setTextColor(...oscuro);
-  doc.text('Detalle por grupo', M, y);
+  doc.text('Detalle por grupo sin planificación o asistencia completa', M, y);
   doc.setFont('helvetica','normal'); doc.setFontSize(7.5); doc.setTextColor(...gris);
   doc.text(`${gs.length} de ${gsAll.length} grupos con planificación o marcaje bajo 100%${gs.length ? ' · ordenados por número de usuarios' : ''} · porcentajes en rojo bajo 70%, ámbar entre 70% y 89%, verde 90% o más`, M, y + 4.5);
   y += 9;
