@@ -29,6 +29,21 @@ No hay instalación, login ni configuración.
 | Horas registradas | Horas trabajadas, tiempo extra, días con atraso y días con permiso |
 | Detalle por grupo | Tabla ordenable con todas las métricas. Al hacer clic en un grupo se abre la lista de sus usuarios uno por uno |
 
+Si además subes el reporte de enrolamiento (ver abajo), se agrega el **% de usuarios enrolados** como métrica general y como columna en el detalle por grupo, en el Excel y en el PDF.
+
+---
+
+## Enrolamiento (opcional)
+
+Debajo de los filtros hay una sección para subir, de forma opcional, el reporte de **Enrolamiento** de GeoVictoria (una fila por usuario con sus métodos de enrolamiento). Si lo subes:
+
+- Se calcula el % de usuarios con **al menos un método de enrolamiento activo** (huella, rostro, voz, tarjeta, clave, etc.), cruzando por `Identificador` con el libro de asistencia.
+- Ese % aparece como métrica general en el tablero y en el resumen del PDF, y como columna adicional en el detalle por grupo (pantalla, Excel y PDF).
+
+**Columnas del archivo de enrolamiento:** `Identificador` es obligatoria; el resto de columnas (Voz, Huella USB, Huella Box, Rostro Box, Biorostro Box, Tarjeta, etc.) se detectan automáticamente y cada una cuenta como método de enrolamiento si su valor no es `No Enrolado` / `No` / vacío.
+
+Si no subes este archivo, el tablero, el Excel y el PDF se generan igual, simplemente sin esa métrica.
+
 ---
 
 ## Definiciones
@@ -63,13 +78,13 @@ La fila de encabezados se busca en las primeras 20 filas de cada hoja, así que 
 
 **Excel** (respeta los filtros activos):
 
-- `Resumen por grupo` — todas las métricas por grupo
+- `Resumen por grupo` — todas las métricas por grupo (incluye usuarios enrolados y % de enrolados si cargaste ese archivo)
 - `Espacios de mejora` — hallazgos con prioridad, dónde y acción sugerida
 - `Detalle usuarios` — un renglón por usuario con su estado
 - `Por día` — planificados, marcaron y cumplimiento diario
 - `Parámetros` — archivo origen, rango, criterios usados y definiciones
 
-**PDF** horizontal con el logo GeoVictoria: resumen con seis indicadores, espacios de mejora por prioridad y la tabla completa por grupo con semáforo de color (rojo bajo 70%, ámbar 70–89%, verde 90% o más).
+**PDF** horizontal con el logo GeoVictoria: resumen con indicadores grandes (seis, más el % de enrolados si lo cargaste) y la tabla por grupo con semáforo de color (rojo bajo 70%, ámbar 70–89%, verde 90% o más). La tabla del PDF solo incluye los grupos con planificación o marcaje bajo 100%; el Excel y el tablero en pantalla siempre muestran todos los grupos. El PDF no incluye "Espacios de mejora" (esa sección sigue disponible en pantalla y en el Excel).
 
 ---
 

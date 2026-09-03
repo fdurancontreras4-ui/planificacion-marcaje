@@ -201,6 +201,21 @@ code { font-family:ui-monospace, Menlo, monospace; font-size:12.5px; background:
 
     <div id="rangeHint" class="hidden" style="background:var(--blue-s);color:var(--blue-d);border-radius:12px;padding:11px 16px;font-size:13.5px;font-weight:600;margin-bottom:16px;line-height:1.5;"></div>
 
+    <div class="card" style="margin-bottom:1.1rem;">
+      <div class="card-head" style="margin-bottom:4px;">
+        <div>
+          <h3>Enrolamiento (opcional)</h3>
+          <p class="cap">Sube el reporte de enrolamiento de GeoVictoria para agregar el % de usuarios con al menos un método de enrolamiento activo, por grupo.</p>
+        </div>
+        <div style="display:flex;align-items:center;gap:10px;flex:none;">
+          <button class="btn" onclick="document.getElementById('fileEnrolamiento').click()">Cargar archivo</button>
+          <input type="file" id="fileEnrolamiento" class="hidden" accept=".xlsx,.xls" onchange="handleEnrolamiento(this.files)">
+          <button class="linkbtn hidden" id="btnQuitarEnrol" onclick="quitarEnrolamiento()">Quitar</button>
+        </div>
+      </div>
+      <p class="small" id="enrolStatus">No se ha cargado ningún archivo de enrolamiento.</p>
+    </div>
+
     <div class="row-main">
       <div class="card">
         <div class="card-head">
@@ -255,10 +270,13 @@ let ROWS = [], VIEW = [], LAST = null;
 let META = { file:'', sheet:'', rows:0, users:0, minD:null, maxD:null, maxMark:null, turnos:{}, tieneHoras:false };
 let SORT = { key:'usuarios', dir:-1 };
 let CHART = { dias:[], x:()=>0, y:()=>0 };
+let ENROL = null, ENROL_META = null;
 
 const norm = s => String(s ?? '').normalize('NFKD').replace(/[\u0300-\u036f]/g,'').replace(/\s+/g,' ').trim().toLowerCase();
 const isEmpty = v => v === null || v === undefined || (typeof v === 'string' && v.trim() === '');
 const pct = (a,b) => b > 0 ? Math.round(a/b*100) : 0;
+const idKey = s => String(s ?? '').trim().toLowerCase();
+const esEnrolado = v => { const n = norm(v); return n !== '' && n !== 'no' && n !== 'no enrolado'; };
 const fmt = n => (n ?? 0).toLocaleString('es-MX');
 const fmtH = h => (h >= 100 ? Math.round(h).toLocaleString('es-MX') : h.toFixed(1)) + ' h';
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -393,9 +411,74 @@ function procesar(wb, fileName){
   render();
 }
 
+/* ================= Enrolamiento (opcional) ================= */
+function handleEnrolamiento(files){
+  if(!files || !files.length) return;
+  const file = files[0], st = document.getElementById('enrolStatus');
+  st.innerHTML = 'Leyendo <strong>' + esc(file.name) + '</strong>…';
+  const reader = new FileReader();
+  reader.onerror = () => { st.innerHTML = '<span class="err">No se pudo leer el archivo de enrolamiento.</span>'; };
+  reader.onload = e => {
+    try { procesarEnrolamiento(XLSX.read(new Uint8Array(e.target.result), { type:'array', cellDates:false }), file.name); }
+    catch(err){ st.innerHTML = '<span class="err">El archivo de enrolamiento no pudo procesarse: ' + esc(err.message) + '</span>'; }
+  };
+  reader.readAsArrayBuffer(file);
+}
+
+function procesarEnrolamiento(wb, fileName){
+  const st = document.getElementById('enrolStatus');
+  let found = null;
+  for(const name of wb.SheetNames){
+    const aoa = XLSX.utils.sheet_to_json(wb.Sheets[name], { header:1, raw:true, defval:null, blankrows:false });
+    for(let i = 0; i < Math.min(aoa.length, 20); i++){
+      const fila = (aoa[i] || []).map(norm);
+      const tieneId = fila.includes('identificador') || fila.includes('rut') || fila.includes('id');
+      if(tieneId && !fila.includes('turno') && !fila.includes('fecha')){ found = { name, aoa, headerRow:i }; break; }
+    }
+    if(found) break;
+  }
+  if(!found){ st.innerHTML = '<span class="err">No se encontró una columna Identificador. Revisa que sea el reporte de enrolamiento y no el libro de asistencia.</span>'; return; }
+
+  const head = (found.aoa[found.headerRow] || []).map(norm);
+  const idIdx = head.indexOf('identificador') >= 0 ? head.indexOf('identificador') : (head.indexOf('rut') >= 0 ? head.indexOf('rut') : head.indexOf('id'));
+  const excluir = new Set(['apellido','apellidos','nombre','identificador','rut','id','grupo actual','grupo']);
+  const metodoCols = [];
+  head.forEach((h,i) => { if(i !== idIdx && h && !excluir.has(h)) metodoCols.push(i); });
+  if(!metodoCols.length){ st.innerHTML = '<span class="err">No se encontraron columnas de métodos de enrolamiento en el archivo.</span>'; return; }
+
+  const mapa = new Map();
+  let filas = 0;
+  for(let r = found.headerRow + 1; r < found.aoa.length; r++){
+    const row = found.aoa[r] || [];
+    const id = String(row[idIdx] ?? '').trim();
+    if(!id) continue;
+    mapa.set(idKey(id), metodoCols.some(c => esEnrolado(row[c])));
+    filas++;
+  }
+  if(!filas){ st.innerHTML = '<span class="err">No se encontraron filas con identificador en el archivo de enrolamiento.</span>'; return; }
+
+  ENROL = mapa;
+  ENROL_META = { file:fileName, rows:filas };
+  st.innerHTML = `<strong>${esc(fileName)}</strong> · ${fmt(filas)} usuarios con datos de enrolamiento.`;
+  document.getElementById('btnQuitarEnrol').classList.remove('hidden');
+  if(ROWS.length) render();
+}
+
+function quitarEnrolamiento(){
+  ENROL = null; ENROL_META = null;
+  document.getElementById('fileEnrolamiento').value = '';
+  document.getElementById('enrolStatus').textContent = 'No se ha cargado ningún archivo de enrolamiento.';
+  document.getElementById('btnQuitarEnrol').classList.add('hidden');
+  if(ROWS.length) render();
+}
+
 function resetAll(){
   ROWS = []; VIEW = []; LAST = null;
+  ENROL = null; ENROL_META = null;
   document.getElementById('fileInput').value = '';
+  document.getElementById('fileEnrolamiento').value = '';
+  document.getElementById('enrolStatus').textContent = 'No se ha cargado ningún archivo de enrolamiento.';
+  document.getElementById('btnQuitarEnrol').classList.add('hidden');
   document.getElementById('loadMsg').innerHTML = '';
   document.getElementById('dash').classList.add('hidden');
   document.getElementById('panel').classList.add('hidden');
@@ -465,6 +548,7 @@ function calcular(){
     const planificados = users.filter(u => u.diasPlan > 0);
     const marcando = users.filter(u => u.marcas > 0);
     const planYMarca = planificados.filter(u => u.marcas > 0);
+    const enrolados = ENROL ? users.filter(u => ENROL.get(idKey(u.id)) === true).length : null;
     filas.push({
       grupo:g.grupo, usuarios:users.length, planificados:planificados.length, marcando:marcando.length,
       pctPlan: pct(planificados.length, users.length), pctMarcaje: pct(marcando.length, users.length),
@@ -476,7 +560,8 @@ function calcular(){
       diasPlan:g.diasPlan, diasEsperados:g.diasEsperados, diasPlanMarca:g.diasPlanMarca,
       cumplimiento: pct(g.diasPlanMarca, g.diasEsperados),
       diasDescanso:g.diasDescanso, diasNoPlan:g.diasNoPlan, diasNoPlanMarca:g.diasNoPlanMarca,
-      permisos:g.permisosN, marcas:g.marcas, ht:g.ht, extra:g.extra, _users:users
+      permisos:g.permisosN, marcas:g.marcas, ht:g.ht, extra:g.extra,
+      enrolados, pctEnrolado: enrolados !== null ? pct(enrolados, users.length) : null, _users:users
     });
   }
 
@@ -488,6 +573,7 @@ function calcular(){
     uAll.set(u.id, p);
   }
   const vals = [...uAll.values()];
+  const enroladosTot = ENROL ? [...uAll.keys()].filter(id => ENROL.get(idKey(id)) === true).length : null;
   const tot = {
     grupos: filas.length, usuarios: uAll.size,
     planificados: vals.filter(v => v.plan).length,
@@ -500,7 +586,8 @@ function calcular(){
     diasEsperados: filas.reduce((a,f) => a + f.diasEsperados, 0),
     diasPlanMarca: filas.reduce((a,f) => a + f.diasPlanMarca, 0),
     marcas: filas.reduce((a,f) => a + f.marcas, 0),
-    ht:htTot, extra:extraTot, diasAtraso, usuariosAtraso:usuariosAtraso.size, permisos:permisosTot
+    ht:htTot, extra:extraTot, diasAtraso, usuariosAtraso:usuariosAtraso.size, permisos:permisosTot,
+    enrolados: enroladosTot, pctEnrolado: enroladosTot !== null ? pct(enroladosTot, uAll.size) : null
   };
 
   const serie = [...diasFull.values()].sort((a,b) => a.dk < b.dk ? -1 : 1)
@@ -609,6 +696,9 @@ function cobertura(t){
     { n:t.marcaSinPlan, tag:'t-blue', txt:'Marcan sin planificar', desc:'Registran marcas sin turno asignado', tipo:'marcaSinPlan' },
     { n:pct(t.diasPlanMarca,t.diasEsperados) + '%', tag:'t-green', txt:'Cumplimiento de días', desc:`${fmt(t.diasPlanMarca)} de ${fmt(t.diasEsperados)} días planificados con marca`, tipo:'planMarcando' }
   ];
+  if(ENROL){
+    filas.push({ n:t.pctEnrolado + '%', tag:tagPct(t.pctEnrolado), txt:'Usuarios enrolados', desc:`${fmt(t.enrolados)} de ${fmt(t.usuarios)} tienen al menos un método de enrolamiento activo`, tipo:'enrolados' });
+  }
   document.getElementById('covLista').innerHTML = filas.map(f => `
     <button class="statrow" onclick="verLista('${f.tipo}')">
       <span class="n">${typeof f.n === 'number' ? fmt(f.n) : f.n}</span>
@@ -731,7 +821,7 @@ function horasCard(t){
 }
 
 /* ================= Tabla ================= */
-const COLS = [
+const COLS_BASE = [
   { k:'grupo', t:'Grupo', num:false },
   { k:'usuarios', t:'Usuarios', num:true },
   { k:'planificados', t:'Planificados', num:true },
@@ -743,17 +833,19 @@ const COLS = [
   { k:'cumplimiento', t:'Cumplim. días', num:true },
   { k:'marcas', t:'Marcas', num:true }
 ];
+function cols(){ return ENROL ? COLS_BASE.concat([{ k:'pctEnrolado', t:'% enrolados', num:true }]) : COLS_BASE; }
 function ordenar(){
   const k = SORT.key, d = SORT.dir;
   VIEW.sort((a,b) => typeof a[k] === 'string' ? String(a[k]).localeCompare(String(b[k]),'es') * d : (a[k] - b[k]) * d);
 }
 function sortBy(k){
   if(SORT.key === k) SORT.dir *= -1;
-  else { SORT.key = k; SORT.dir = (COLS.find(c => c.k === k) || {}).num === false ? 1 : -1; }
+  else { SORT.key = k; SORT.dir = (cols().find(c => c.k === k) || {}).num === false ? 1 : -1; }
   ordenar(); tabla();
 }
 function tabla(){
-  const th = COLS.map(c => `<th class="sortable${c.num ? ' num' : ''}" onclick="sortBy('${c.k}')">${c.t} ${SORT.key === c.k ? (SORT.dir === -1 ? '▾' : '▴') : ''}</th>`).join('');
+  const C = cols();
+  const th = C.map(c => `<th class="sortable${c.num ? ' num' : ''}" onclick="sortBy('${c.k}')">${c.t} ${SORT.key === c.k ? (SORT.dir === -1 ? '▾' : '▴') : ''}</th>`).join('');
   const rows = VIEW.map((g,i) => `
     <tr class="clickable" onclick="verGrupo(${i})">
       <td style="font-weight:700">${esc(g.grupo)}</td>
@@ -766,14 +858,16 @@ function tabla(){
       <td class="num">${g.marcaSinPlan ? `<span class="tag t-blue">${fmt(g.marcaSinPlan)}</span>` : '—'}</td>
       <td class="num">${g.diasEsperados ? `<span class="tag ${tagPct(g.cumplimiento)}">${g.cumplimiento}%</span>` : '—'}</td>
       <td class="num">${fmt(g.marcas)}</td>
+      ${ENROL ? `<td class="num"><span class="mini"><i style="width:${g.pctEnrolado}%;background:${colorPct(g.pctEnrolado)}"></i></span><span class="tag ${tagPct(g.pctEnrolado)}">${g.pctEnrolado}%</span></td>` : ''}
     </tr>`).join('');
   const t = LAST.tot;
   const foot = VIEW.length ? `<tfoot><tr>
       <td>Total · ${VIEW.length} grupos</td><td class="num">${fmt(t.usuarios)}</td><td class="num">${fmt(t.planificados)}</td>
       <td class="num">${pct(t.planificados,t.usuarios)}%</td><td class="num">${fmt(t.marcando)}</td><td class="num">${pct(t.marcando,t.usuarios)}%</td>
       <td class="num">${fmt(t.planSinMarca)}</td><td class="num">${fmt(t.marcaSinPlan)}</td>
-      <td class="num">${pct(t.diasPlanMarca,t.diasEsperados)}%</td><td class="num">${fmt(t.marcas)}</td></tr></tfoot>` : '';
-  document.getElementById('tabla').innerHTML = `<thead><tr>${th}</tr></thead><tbody>${rows || '<tr><td colspan="10" class="note">Sin datos en el rango seleccionado.</td></tr>'}</tbody>${foot}`;
+      <td class="num">${pct(t.diasPlanMarca,t.diasEsperados)}%</td><td class="num">${fmt(t.marcas)}</td>
+      ${ENROL ? `<td class="num">${t.pctEnrolado}%</td>` : ''}</tr></tfoot>` : '';
+  document.getElementById('tabla').innerHTML = `<thead><tr>${th}</tr></thead><tbody>${rows || `<tr><td colspan="${C.length}" class="note">Sin datos en el rango seleccionado.</td></tr>`}</tbody>${foot}`;
 }
 
 /* ================= Modales ================= */
@@ -813,9 +907,10 @@ function verGrupo(i){
     `<button class="btn" onclick="exportGrupo(${i})">Descargar grupo</button>`);
 }
 const FILTROS = { sinPlan: u => u.diasPlan === 0, planSinMarca: u => u.diasPlan > 0 && u.marcas === 0,
-  marcaSinPlan: u => u.diasPlan === 0 && u.marcas > 0, marcando: u => u.marcas > 0, planMarcando: u => u.diasPlan > 0 && u.marcas > 0 };
+  marcaSinPlan: u => u.diasPlan === 0 && u.marcas > 0, marcando: u => u.marcas > 0, planMarcando: u => u.diasPlan > 0 && u.marcas > 0,
+  enrolados: u => !!(ENROL && ENROL.get(idKey(u.id)) === true) };
 function verLista(tipo){
-  const titulos = { sinPlan:'Usuarios sin planificar', planSinMarca:'Planificados sin marcas', marcaSinPlan:'Marcan sin planificación', marcando:'Usuarios marcando', planMarcando:'Planificados que marcan' };
+  const titulos = { sinPlan:'Usuarios sin planificar', planSinMarca:'Planificados sin marcas', marcaSinPlan:'Marcan sin planificación', marcando:'Usuarios marcando', planMarcando:'Planificados que marcan', enrolados:'Usuarios enrolados' };
   const users = todosUsuarios().filter(FILTROS[tipo]).sort((a,b) => (b.marcas - a.marcas) || String(a.grupo).localeCompare(String(b.grupo),'es'));
   abrirModal(titulos[tipo], `${fmt(users.length)} usuarios · rango ${corto(LAST.desde)} – ${corto(LAST.hasta)}`,
     users.length ? tablaUsuarios(users.slice(0,800)) + (users.length > 800 ? '<p class="note" style="margin-top:10px;">Se muestran los primeros 800. Descarga el Excel para la lista completa.</p>' : '')
@@ -837,8 +932,14 @@ function mkHoja(titulo, head, body, cols, pctCols){
 
 function hojaGrupos(){
   const head = ['Grupo','Usuarios','Usuarios planificados','% planificación','Usuarios marcando','% marcaje','Planificados y marcando','Planificados sin marca','Marcan sin planificación','Sin planificar','Días planificados','Días esperados','Días planificados con marca','% cumplimiento','Días descanso','Días no planificados','Días con permiso','Total de marcas','Horas trabajadas','Tiempo extra'];
-  const body = VIEW.map(g => [g.grupo,g.usuarios,g.planificados,g.pctPlan/100,g.marcando,g.pctMarcaje/100,g.planMarcando,g.planSinMarca,g.marcaSinPlan,g.sinPlan,g.diasPlan,g.diasEsperados,g.diasPlanMarca,g.cumplimiento/100,g.diasDescanso,g.diasNoPlan,g.permisos,g.marcas,Math.round(g.ht*100)/100,Math.round(g.extra*100)/100]);
-  return mkHoja('Resumen por grupo', head, body, [{wch:34}, ...Array(head.length-1).fill({wch:14})], ['D','F','N']);
+  const pctCols = ['D','F','N'];
+  if(ENROL){ head.push('Usuarios enrolados','% enrolados'); pctCols.push(XLSX.utils.encode_col(head.length - 1)); }
+  const body = VIEW.map(g => {
+    const fila = [g.grupo,g.usuarios,g.planificados,g.pctPlan/100,g.marcando,g.pctMarcaje/100,g.planMarcando,g.planSinMarca,g.marcaSinPlan,g.sinPlan,g.diasPlan,g.diasEsperados,g.diasPlanMarca,g.cumplimiento/100,g.diasDescanso,g.diasNoPlan,g.permisos,g.marcas,Math.round(g.ht*100)/100,Math.round(g.extra*100)/100];
+    if(ENROL) fila.push(g.enrolados, g.pctEnrolado/100);
+    return fila;
+  });
+  return mkHoja('Resumen por grupo', head, body, [{wch:34}, ...Array(head.length-1).fill({wch:14})], pctCols);
 }
 function hojaUsuarios(users){
   const head = ['Grupo','Identificador','Nombre','Cargo','Días planificados','Días esperados','Días con marca','Días planificados con marca','Total marcas','Días con permiso','Horas trabajadas','Tiempo extra','Primera marca','Última marca','Estado'];
@@ -862,7 +963,8 @@ function hojaParams(){
     ['Período revisado', `${LAST.desde} a ${LAST.hasta}`],
     ['Período revisado (texto)', periodoTxt()],
     ['Generado', new Date().toLocaleString('es-MX')],
-    ['Archivo origen', META.file], ['Hoja', META.sheet], ['Filas usuario-día', META.rows], [],
+    ['Archivo origen', META.file], ['Hoja', META.sheet], ['Filas usuario-día', META.rows],
+    ['Archivo de enrolamiento', ENROL_META ? `${ENROL_META.file} (${ENROL_META.rows} usuarios)` : 'No se cargó'], [],
     ['Rango del archivo', META.minD + ' a ' + META.maxD], ['Última fecha con marcas', META.maxMark],
     ['Grupo seleccionado', LAST.grupoSel || 'Todos'],
     ['Descanso cuenta como planificado', LAST.contarDescanso ? 'Sí' : 'No'], ['Días con permiso descontados', LAST.descontarPermiso ? 'Sí' : 'No'], [],
@@ -871,11 +973,13 @@ function hojaParams(){
     ['Usuarios marcando', t.marcando], ['Usuarios planificados', t.planificados], ['Planificados que marcan', t.planMarcando],
     ['Planificados sin marcas', t.planSinMarca], ['Sin planificar', t.sinPlan], ['Marcan sin planificación', t.marcaSinPlan],
     ['% cumplimiento de días', pct(t.diasPlanMarca,t.diasEsperados) + '%'],
-    ['Horas trabajadas', Math.round(t.ht)], ['Tiempo extra', Math.round(t.extra*100)/100], ['Días con atraso', t.diasAtraso], [],
+    ['Horas trabajadas', Math.round(t.ht)], ['Tiempo extra', Math.round(t.extra*100)/100], ['Días con atraso', t.diasAtraso],
+    ...(ENROL ? [['% usuarios enrolados', t.pctEnrolado + '%'], ['Usuarios enrolados', t.enrolados]] : []), [],
     ['Definiciones'],
     ['Marcaje', 'Usuarios con al menos una marca (Entró o Salió) ÷ usuarios del rango.'],
     ['Planificación', 'Usuarios con al menos un día con turno asignado ÷ usuarios del rango.'],
-    ['Cumplimiento', 'Días planificados con al menos una marca ÷ días planificados esperados.']];
+    ['Cumplimiento', 'Días planificados con al menos una marca ÷ días planificados esperados.'],
+    ...(ENROL ? [['Enrolamiento', '% de usuarios con al menos un método de enrolamiento activo (huella, rostro, voz, tarjeta, etc.), según el archivo de enrolamiento cargado.']] : [])];
   const ws = XLSX.utils.aoa_to_sheet(aoa);
   ws['!cols'] = [{wch:40},{wch:62}];
   return ws;
@@ -908,7 +1012,9 @@ function exportPDF(){
   if(!JS){ alert('No se pudo cargar el generador de PDF (requiere conexión). Puedes usar Ctrl+P para imprimir el tablero o descargar el Excel.'); return; }
   const doc = new JS({ orientation:'landscape', unit:'mm', format:'a4' });
   const PW = 297, PH = 210, M = 12;
-  const t = LAST.tot, gs = LAST.filas.slice().sort((a,b) => b.usuarios - a.usuarios);
+  const t = LAST.tot;
+  const gsAll = LAST.filas.slice().sort((a,b) => b.usuarios - a.usuarios);
+  const gs = gsAll.filter(g => g.pctPlan < 100 || g.pctMarcaje < 100);
   const gris = [107,122,144], oscuro = [31,42,55], linea = [223,229,238];
 
   function encabezado(){
@@ -929,27 +1035,27 @@ function exportPDF(){
       doc.text(`Página ${i} de ${n}`, PW - M, PH - 8, { align:'right' });
     }
   }
-  function kpi(x, y, w, label, valor, sub, color){
+  function kpi(x, y, w, h, label, valor, sub, color){
     doc.setDrawColor(...linea); doc.setFillColor(255,255,255);
-    doc.roundedRect(x, y, w, 22, 2.5, 2.5, 'FD');
-    doc.setFont('helvetica','bold'); doc.setFontSize(6.8); doc.setTextColor(...gris);
-    doc.text(label.toUpperCase(), x + 4, y + 6);
-    doc.setFontSize(17); doc.setTextColor(...(color || oscuro));
-    doc.text(String(valor), x + 4, y + 14.5);
-    doc.setFont('helvetica','normal'); doc.setFontSize(6.8); doc.setTextColor(...gris);
-    doc.text(sub, x + 4, y + 19);
+    doc.roundedRect(x, y, w, h, 3, 3, 'FD');
+    doc.setFont('helvetica','bold'); doc.setFontSize(9); doc.setTextColor(...gris);
+    doc.text(label.toUpperCase(), x + 6, y + 11);
+    doc.setFontSize(32); doc.setTextColor(...(color || oscuro));
+    doc.text(String(valor), x + 6, y + h - 12);
+    doc.setFont('helvetica','normal'); doc.setFontSize(9); doc.setTextColor(...gris);
+    doc.text(sub, x + 6, y + h - 5);
   }
 
-  // ---- Página 1: resumen + espacios de mejora
+  // ---- Página 1: métricas iniciales (agrandadas)
   encabezado();
-  let y = 26;
+  let y = 28;
   doc.setFont('helvetica','bold'); doc.setFontSize(16); doc.setTextColor(...oscuro);
   doc.text(empresaTxt(), M, y);
   doc.setFont('helvetica','normal'); doc.setFontSize(8.5); doc.setTextColor(...gris);
   doc.text(`Resumen del período revisado: ${periodoTxt()}`, M, y + 5);
-  y += 11;
+  y += 14;
+
   const pm = pct(t.marcando, t.usuarios), pp = pct(t.planificados, t.usuarios), pc = pct(t.diasPlanMarca, t.diasEsperados);
-  const w = (PW - M*2 - 5*4) / 6;
   const cajas = [
     ['% de marcaje', pm + '%', `${fmt(t.marcando)} de ${fmt(t.usuarios)} usuarios`, rgbPct(pm)],
     ['% de planificación', pp + '%', `${fmt(t.planificados)} con turno asignado`, rgbPct(pp)],
@@ -958,49 +1064,49 @@ function exportPDF(){
     ['Planificados sin marcas', fmt(t.planSinMarca), 'nunca marcaron', [239,74,107]],
     ['Marcan sin planificar', fmt(t.marcaSinPlan), 'marcas sin turno', [59,157,248]]
   ];
-  cajas.forEach((c,i) => kpi(M + i*(w+4), y, w, c[0], c[1], c[2], c[3]));
-  y += 30;
+  if(ENROL) cajas.push(['% usuarios enrolados', t.pctEnrolado + '%', `${fmt(t.enrolados)} de ${fmt(t.usuarios)} con enrolamiento`, rgbPct(t.pctEnrolado)]);
 
-  doc.setFont('helvetica','bold'); doc.setFontSize(13); doc.setTextColor(...oscuro);
-  doc.text('Espacios de mejora', M, y);
-  doc.setFont('helvetica','normal'); doc.setFontSize(7.5); doc.setTextColor(...gris);
-  doc.text('Priorizados por cantidad de usuarios o días afectados', M, y + 4.5);
-  y += 9;
-  const sevCol = { alta:[239,74,107], media:[240,169,43], baja:[59,157,248] };
-  for(const m of mejoras(LAST)){
-    const det = doc.splitTextToSize(m.detalle, PW - M*2 - 12);
-    const don = doc.splitTextToSize('Dónde: ' + m.donde + '   |   Acción: ' + m.accion, PW - M*2 - 12);
-    const h = 6 + det.length*3.6 + don.length*3.4 + 4;
-    if(y + h > PH - 16){ doc.addPage(); encabezado(); y = 26; }
-    doc.setFillColor(...sevCol[m.sev]); doc.roundedRect(M, y, 1.8, h - 3, 0.9, 0.9, 'F');
-    doc.setFont('helvetica','bold'); doc.setFontSize(9.5); doc.setTextColor(...oscuro);
-    doc.text(m.titulo, M + 5, y + 4);
-    doc.setFontSize(6.5); doc.setTextColor(...sevCol[m.sev]);
-    doc.text('PRIORIDAD ' + m.sev.toUpperCase(), PW - M, y + 4, { align:'right' });
-    doc.setFont('helvetica','normal'); doc.setFontSize(8); doc.setTextColor(70,82,98);
-    doc.text(det, M + 5, y + 8.6);
-    doc.setFontSize(7.2); doc.setTextColor(...gris);
-    doc.text(don, M + 5, y + 8.6 + det.length*3.6 + 1);
-    y += h;
+  const porFila = 3, gap = 8, filasGrid = Math.ceil(cajas.length / porFila), ch = filasGrid >= 3 ? 36 : 54;
+  let idxCaja = 0;
+  for(let f = 0; f < filasGrid; f++){
+    const items = cajas.slice(idxCaja, idxCaja + porFila);
+    const cw = (PW - M*2 - gap*(items.length-1)) / items.length;
+    items.forEach((c,ci) => kpi(M + ci*(cw+gap), y + f*(ch+gap), cw, ch, c[0], c[1], c[2], c[3]));
+    idxCaja += porFila;
   }
+  y += filasGrid*ch + Math.max(0, filasGrid-1)*gap;
+  doc.setFont('helvetica','normal'); doc.setFontSize(8.5); doc.setTextColor(...gris);
+  doc.text('El detalle completo por grupo está en las páginas siguientes.', M, y + 10);
 
-  // ---- Tabla por grupo
+  // ---- Tabla por grupo (solo grupos con planificación o marcaje bajo 100%)
   doc.addPage(); encabezado();
   y = 26;
   doc.setFont('helvetica','bold'); doc.setFontSize(13); doc.setTextColor(...oscuro);
   doc.text('Detalle por grupo', M, y);
   doc.setFont('helvetica','normal'); doc.setFontSize(7.5); doc.setTextColor(...gris);
-  doc.text(`${gs.length} grupos · ordenados por número de usuarios · porcentajes en rojo bajo 70%, ámbar entre 70% y 89%, verde 90% o más`, M, y + 4.5);
+  doc.text(`${gs.length} de ${gsAll.length} grupos con planificación o marcaje bajo 100%${gs.length ? ' · ordenados por número de usuarios' : ''} · porcentajes en rojo bajo 70%, ámbar entre 70% y 89%, verde 90% o más`, M, y + 4.5);
   y += 9;
 
-  const cols = [
+  if(!gs.length){
+    doc.setFont('helvetica','normal'); doc.setFontSize(9.5); doc.setTextColor(...gris);
+    doc.text('Todos los grupos tienen 100% de planificación y de marcaje: no hay grupos que mostrar en esta tabla.', M, y + 6);
+    pie();
+    doc.save(`Reporte_asistencia_${empresa() ? slug(empresa()) + '_' : ''}${LAST.desde}_a_${LAST.hasta}.pdf`);
+    return;
+  }
+
+  const cols = ENROL ? [
+    { t:'Grupo', w:53, a:'left' }, { t:'Usuarios', w:17 }, { t:'Planif.', w:17 }, { t:'% planif.', w:19, p:true },
+    { t:'Marcando', w:19 }, { t:'% marcaje', w:20, p:true }, { t:'Plan. sin\nmarca', w:20 }, { t:'Marcan\nsin plan', w:20 },
+    { t:'% enrol.', w:19, p:true }, { t:'Cumplim.', w:20, p:true }, { t:'Marcas', w:19 }
+  ] : [
     { t:'Grupo', w:74, a:'left' }, { t:'Usuarios', w:19 }, { t:'Planif.', w:19 }, { t:'% planif.', w:21, p:true },
     { t:'Marcando', w:21 }, { t:'% marcaje', w:22, p:true }, { t:'Plan. sin\nmarca', w:22 }, { t:'Marcan\nsin plan', w:22 },
     { t:'Cumplim.', w:22, p:true }, { t:'Marcas', w:21 }
   ];
   const xs = []; let acc = M;
   cols.forEach(c => { xs.push(acc); acc += c.w; });
-  const RH = 6.4;
+  const RH = 6.4, maxChars = Math.floor(cols[0].w * 0.62);
 
   function cabeceraTabla(){
     doc.setFillColor(246,248,251); doc.rect(M, y, acc - M, 8, 'F');
@@ -1016,13 +1122,16 @@ function exportPDF(){
   gs.forEach((g, ri) => {
     if(y + RH > PH - 16){ doc.addPage(); encabezado(); y = 26; cabeceraTabla(); }
     if(ri % 2 === 1){ doc.setFillColor(251,252,254); doc.rect(M, y, acc - M, RH, 'F'); }
-    const vals = [g.grupo, fmt(g.usuarios), fmt(g.planificados), g.pctPlan, fmt(g.marcando), g.pctMarcaje,
+    const vals = ENROL ? [g.grupo, fmt(g.usuarios), fmt(g.planificados), g.pctPlan, fmt(g.marcando), g.pctMarcaje,
+      g.planSinMarca ? fmt(g.planSinMarca) : '—', g.marcaSinPlan ? fmt(g.marcaSinPlan) : '—',
+      g.pctEnrolado, g.diasEsperados ? g.cumplimiento : null, fmt(g.marcas)]
+      : [g.grupo, fmt(g.usuarios), fmt(g.planificados), g.pctPlan, fmt(g.marcando), g.pctMarcaje,
       g.planSinMarca ? fmt(g.planSinMarca) : '—', g.marcaSinPlan ? fmt(g.marcaSinPlan) : '—',
       g.diasEsperados ? g.cumplimiento : null, fmt(g.marcas)];
     cols.forEach((c,i) => {
       const v = vals[i];
       if(c.p){
-        if(v === null){ doc.setFont('helvetica','normal'); doc.setFontSize(7.2); doc.setTextColor(...gris); doc.text('—', xs[i] + c.w - 2, y + 4.4, { align:'right' }); return; }
+        if(v === null || v === undefined){ doc.setFont('helvetica','normal'); doc.setFontSize(7.2); doc.setTextColor(...gris); doc.text('—', xs[i] + c.w - 2, y + 4.4, { align:'right' }); return; }
         const col = rgbPct(v);
         doc.setFillColor(col[0], col[1], col[2]);
         doc.roundedRect(xs[i] + c.w - 15, y + 1.2, 13, 4.2, 1.2, 1.2, 'F');
@@ -1030,7 +1139,7 @@ function exportPDF(){
         doc.text(v + '%', xs[i] + c.w - 8.5, y + 4.2, { align:'center' });
       } else {
         doc.setFont('helvetica', i === 0 ? 'bold' : 'normal'); doc.setFontSize(7.2); doc.setTextColor(...oscuro);
-        const txt = i === 0 ? (String(v).length > 46 ? String(v).slice(0,44) + '…' : String(v)) : String(v);
+        const txt = i === 0 ? (String(v).length > maxChars ? String(v).slice(0,maxChars-2) + '…' : String(v)) : String(v);
         doc.text(txt, c.a === 'left' ? xs[i] + 2 : xs[i] + c.w - 2, y + 4.4, { align: c.a === 'left' ? 'left' : 'right' });
       }
     });
@@ -1041,8 +1150,22 @@ function exportPDF(){
   if(y + 8 > PH - 16){ doc.addPage(); encabezado(); y = 26; }
   doc.setFillColor(240,244,249); doc.rect(M, y, acc - M, 7, 'F');
   doc.setFont('helvetica','bold'); doc.setFontSize(7.2); doc.setTextColor(...oscuro);
-  const tot = ['Total · ' + gs.length + ' grupos', fmt(t.usuarios), fmt(t.planificados), pp + '%', fmt(t.marcando), pm + '%', fmt(t.planSinMarca), fmt(t.marcaSinPlan), pc + '%', fmt(t.marcas)];
-  cols.forEach((c,i) => doc.text(String(tot[i]), c.a === 'left' ? xs[i] + 2 : xs[i] + c.w - 2, y + 4.7, { align: c.a === 'left' ? 'left' : 'right' }));
+  const sub = gs.reduce((a,g) => {
+    a.usuarios += g.usuarios; a.planificados += g.planificados; a.marcando += g.marcando;
+    a.planSinMarca += g.planSinMarca; a.marcaSinPlan += g.marcaSinPlan; a.marcas += g.marcas;
+    a.diasEsperados += g.diasEsperados; a.diasPlanMarca += g.diasPlanMarca; a.enrolados += (g.enrolados || 0);
+    return a;
+  }, { usuarios:0, planificados:0, marcando:0, planSinMarca:0, marcaSinPlan:0, marcas:0, diasEsperados:0, diasPlanMarca:0, enrolados:0 });
+  const totRow = ENROL ? [
+    'Subtotal · ' + gs.length + ' grupos', fmt(sub.usuarios), fmt(sub.planificados), pct(sub.planificados,sub.usuarios) + '%',
+    fmt(sub.marcando), pct(sub.marcando,sub.usuarios) + '%', fmt(sub.planSinMarca), fmt(sub.marcaSinPlan),
+    pct(sub.enrolados,sub.usuarios) + '%', pct(sub.diasPlanMarca,sub.diasEsperados) + '%', fmt(sub.marcas)
+  ] : [
+    'Subtotal · ' + gs.length + ' grupos', fmt(sub.usuarios), fmt(sub.planificados), pct(sub.planificados,sub.usuarios) + '%',
+    fmt(sub.marcando), pct(sub.marcando,sub.usuarios) + '%', fmt(sub.planSinMarca), fmt(sub.marcaSinPlan),
+    pct(sub.diasPlanMarca,sub.diasEsperados) + '%', fmt(sub.marcas)
+  ];
+  cols.forEach((c,i) => doc.text(String(totRow[i]), c.a === 'left' ? xs[i] + 2 : xs[i] + c.w - 2, y + 4.7, { align: c.a === 'left' ? 'left' : 'right' }));
 
   pie();
   doc.save(`Reporte_asistencia_${empresa() ? slug(empresa()) + '_' : ''}${LAST.desde}_a_${LAST.hasta}.pdf`);
